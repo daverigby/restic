@@ -80,7 +80,14 @@ func openFile(path string) (*os.File, error) {
 }
 
 func createFile(path string, createSize int64, sparse bool, allowRecursiveDelete bool) (*os.File, error) {
-	f, err := fs.OpenFile(path, fs.O_CREATE|fs.O_WRONLY|fs.O_NOFOLLOW, 0600)
+	// Most restores create a new file. Try that path first so that it does not
+	// need a separate stat call. Existing files still use the checks below.
+	f, err := fs.OpenFile(path, fs.O_CREATE|fs.O_EXCL|fs.O_WRONLY|fs.O_NOFOLLOW, 0600)
+	if err == nil {
+		return ensureSize(f, nil, createSize, sparse)
+	}
+
+	f, err = fs.OpenFile(path, fs.O_CREATE|fs.O_WRONLY|fs.O_NOFOLLOW, 0600)
 	if err != nil && fs.IsAccessDenied(err) {
 		// If file is readonly, clear the readonly flag by resetting the
 		// permissions of the file and try again
@@ -159,7 +166,7 @@ func ensureSize(f *os.File, fi os.FileInfo, createSize int64, sparse bool) (*os.
 			_ = f.Close()
 			return nil, err
 		}
-	} else if fi.Size() > createSize {
+	} else if fi != nil && fi.Size() > createSize {
 		// file is too long must shorten it
 		err := f.Truncate(createSize)
 		if err != nil {
